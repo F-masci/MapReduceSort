@@ -4,18 +4,25 @@ import (
 	"MapReduceSort/config"
 	"MapReduceSort/structs"
 	"MapReduceSort/utils"
-	"fmt"
+	"flag"
 	"log"
 	"net"
 	"net/rpc"
 	"sort"
 	"strconv"
+	"sync"
+	"time"
 )
 
 // WorkerHandler Handler per esporre il metodo RPC del worker
 type WorkerHandler struct {
-	ID          int
-	ReduceQueue [][]int
+	ReduceQueue map[ReduceQueueKey][][]int
+	Mutex       sync.Mutex
+}
+
+type ReduceQueueKey struct {
+	Client    string
+	Timestamp time.Time
 }
 
 func distributeNumbersByValue(input []int, maxValue, nodes int) [][]int {
@@ -52,26 +59,25 @@ func mergeSortedArrays(input [][]int) []int {
 	return result
 }
 
-func (WorkerHandler) Map(request structs.SortMapRequest, reply *structs.SortMapResponse) error {
+func (wh *WorkerHandler) Map(request structs.SortMapRequest, _ *structs.SortMapResponse) error {
 
-	reply.Response = make([]int, len(request.Request))
-	copy(reply.Response, request.Request)
-	sort.Ints(reply.Response)
-	fmt.Println("Richiesta ricevuta: ", request.Request, "\nNumeri ordinati: ", reply.Response)
+	sort.Ints(request.Request)
+	log.Println("Mapped")
 
-	nReducer := len(config.ReducerAddresses)
-	distribution := distributeNumbersByValue(reply.Response, config.CasualNumbersRange, nReducer)
+	_, _, reducerAddresses := config.ParseConfig()
+	nReducer := len(reducerAddresses)
+	distribution := distributeNumbersByValue(request.Request, config.CasualNumbersRange, nReducer)
 
 	// Ordina i chunk
 	for i := range nReducer {
 
 		chunk := distribution[i]
-		reducerConfig := config.ReducerAddresses[i]
+		reducerConfig := reducerAddresses[i]
 
 		client, err := rpc.Dial(reducerConfig.Proto, reducerConfig.Address())
 		utils.CheckError(err)
 
-		request := structs.SortReduceRequest{Client: request.Client, Timestamp: request.Timestamp, Request: chunk}
+		request := structs.SortReduceRequest{Client: request.Client, Timestamp: request.Timestamp, Request: chunk, ReducerIdx: i}
 		var reply structs.SortReduceResponse
 
 		err = client.Call("WorkerHandler.Reduce", request, &reply)
@@ -84,12 +90,21 @@ func (WorkerHandler) Map(request structs.SortMapRequest, reply *structs.SortMapR
 
 func (wh *WorkerHandler) Reduce(request structs.SortReduceRequest, _ *structs.SortMapResponse) error {
 
-	wh.ReduceQueue = append(wh.ReduceQueue, request.Request)
-	fmt.Println("[", wh.ID, "] Richiesta di reduce ricevuta da ", request.Client, "-", request.Timestamp)
+	reduceQueueKey := ReduceQueueKey{Client: request.Client, Timestamp: request.Timestamp}
+	wh.Mutex.Lock()
+	wh.ReduceQueue[reduceQueueKey] = append(wh.ReduceQueue[reduceQueueKey], request.Request)
+	wh.Mutex.Unlock()
 
-	if len(wh.ReduceQueue) == len(config.MapperAddresses) {
-		res := mergeSortedArrays(wh.ReduceQueue)
-		utils.WriteResultToFile(res, request.Client+"_"+request.Timestamp.Format("2006_01_02_15_04_05")+"__"+strconv.Itoa(wh.ID))
+	_, mapperAddresses, _ := config.ParseConfig()
+	if len(wh.ReduceQueue[reduceQueueKey]) == len(mapperAddresses) {
+		filename := request.Client + "_" + request.Timestamp.Format("2006_01_02_15_04_05") + "__" + strconv.Itoa(request.ReducerIdx)
+		res := mergeSortedArrays(wh.ReduceQueue[reduceQueueKey])
+		err := utils.WriteResultToFile(res, filename)
+		utils.CheckError(err)
+		log.Println(reduceQueueKey, "Reduced")
+		wh.Mutex.Lock()
+		delete(wh.ReduceQueue, reduceQueueKey)
+		wh.Mutex.Unlock()
 	}
 
 	return nil
@@ -97,27 +112,36 @@ func (wh *WorkerHandler) Reduce(request structs.SortReduceRequest, _ *structs.So
 
 func main() {
 
-	workerAddresses := utils.MergeAndRemoveDuplicates(config.MapperAddresses, config.ReducerAddresses)
+	// Recuperare gli argomenti
+	address := flag.String("address", "localhost", "Specifica l'indirizzo su cui contattare il master")
+	port := flag.Int("port", 0, "Specifica la porta su cui contattare il master")
+	proto := flag.String("proto", "tcp", "Specifica il protocollo con cui contattare il master")
+	_ = flag.String("mode", "both", "Specifica se utilizzare il worker come mapper, reducer o entrambi")
+	flag.Parse()
 
-	// Avvio i listener dei workers
-	for idx, workerConfig := range workerAddresses {
-
-		// Alloco la funzione del worker e passo un puntatore
-		sortHandler := &WorkerHandler{ID: idx, ReduceQueue: make([][]int, 0)}
-
-		server := rpc.NewServer()
-		err := server.Register(sortHandler)
-		utils.CheckError(err)
-
-		// Faccio il bind con gli indirizzi specificati nelle config
-		lis, err := net.Listen(workerConfig.Proto, workerConfig.Address())
-		utils.CheckError(err)
-		log.Printf("RPC worker listens on port %d", workerConfig.Port)
-
-		// Metto il mapper in ascolto su una goroutine differente
-		go server.Accept(lis)
+	if *port == 0 {
+		log.Fatal("Specificare il numero di porta")
 	}
-	// Impedisco alla routine principale di terminare
-	select {}
+
+	workerAddress := structs.WorkerAddress{
+		Host:  *address,
+		Port:  *port,
+		Proto: *proto,
+	}
+
+	// Alloco la funzione del worker e passo un puntatore
+	sortHandler := &WorkerHandler{ReduceQueue: make(map[ReduceQueueKey][][]int)}
+
+	server := rpc.NewServer()
+	err := server.Register(sortHandler)
+	utils.CheckError(err)
+
+	// Faccio il bind con gli indirizzi specificati nelle config
+	lis, err := net.Listen(workerAddress.Proto, workerAddress.Address())
+	utils.CheckError(err)
+	log.Printf("RPC worker listens on port %d", workerAddress.Port)
+
+	// Metto il worker in ascolto
+	server.Accept(lis)
 
 }

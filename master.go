@@ -4,26 +4,24 @@ import (
 	"MapReduceSort/config"
 	"MapReduceSort/structs"
 	"MapReduceSort/utils"
-	"fmt"
-	"math/rand"
+	"flag"
+	"log"
+	"net"
 	"net/rpc"
 	"sync"
 	"time"
 )
 
-func main() {
+type MasterHandler struct{}
 
-	numbers := make([]int, config.CasualNumbersDim)
+func (MasterHandler) Sort(request structs.SortRequest, reply *structs.SortMapResponse) error {
 
-	// Genera N numeri casuali
-	for i := 0; i < config.CasualNumbersDim; i++ {
-		numbers[i] = rand.Intn(config.CasualNumbersRange) // Numeri interi casuali nell'intervallo [0, CasualNumbersRange]
-	}
+	log.Println("New request from", request.Client)
 
-	// Stampa i numeri casuali
-	fmt.Printf("Numeri generati: %v\n", numbers)
+	_, mapperAddresses, _ := config.ParseConfig()
+	numbers := request.Request
 
-	nMapper := len(config.MapperAddresses)
+	nMapper := len(mapperAddresses)
 	chunkSize := len(numbers) / nMapper
 	remainder := len(numbers) % nMapper
 
@@ -41,23 +39,62 @@ func main() {
 
 	// Ordina i chunk
 	var wg sync.WaitGroup
+	timestamp := time.Now()
 	for i := range nMapper {
 
 		chunk := chunks[i]
-		mapperConfig := config.MapperAddresses[i]
+		mapperConfig := mapperAddresses[i]
 
 		mapper, err := rpc.Dial(mapperConfig.Proto, mapperConfig.Address())
 		utils.CheckError(err)
 
-		request := structs.SortMapRequest{Client: "localhost", Timestamp: time.Now(), Request: chunk}
+		request := structs.SortMapRequest{Client: request.Client, Timestamp: timestamp, Request: chunk, MapperIdx: i}
 
 		wg.Add(1)
 
 		go func() {
-			defer wg.Done() // Decrementa il counter del WaitGroup quando la chiamata è finita
+			defer wg.Done()
 			mapper.Go("WorkerHandler.Map", request, nil, nil)
 			utils.CheckError(err)
 		}()
 	}
 	wg.Wait()
+
+	return nil
+
+}
+
+func main() {
+
+	// Recuperare gli argomenti
+	address := flag.String("address", "localhost", "Specifica l'indirizzo su cui contattare il master")
+	port := flag.Int("port", 0, "Specifica la porta su cui contattare il master")
+	proto := flag.String("proto", "tcp", "Specifica il protocollo con cui contattare il master")
+	flag.Parse()
+
+	if *port == 0 {
+		log.Fatal("Specificare il numero di porta")
+	}
+
+	masterAddress := structs.MasterAddress{
+		Host:  *address,
+		Port:  *port,
+		Proto: *proto,
+	}
+
+	// Alloco la funzione del worker e passo un puntatore
+	masterHandler := MasterHandler{}
+
+	server := rpc.NewServer()
+	err := server.Register(masterHandler)
+	utils.CheckError(err)
+
+	// Faccio il bind con gli indirizzi specificati nelle config
+	lis, err := net.Listen(masterAddress.Proto, masterAddress.Address())
+	utils.CheckError(err)
+	log.Printf("RPC master listens on port %d", masterAddress.Port)
+
+	// Metto il master in ascolto
+	server.Accept(lis)
+
 }

@@ -1,0 +1,12 @@
+[
+  {
+    "host": "localhost",
+    "port": 45980,
+    "proto": "tcp"
+  },
+  {
+    "host": "localhost",
+    "port": 45981,
+    "proto": "tcp"
+  }
+]

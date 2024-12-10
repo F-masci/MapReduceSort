@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// Scrive un array ordinato su un file
+// WriteResultToFile Scrive un array  su un file
 func WriteResultToFile(arr []int, filename string) error {
 	// Ordina l'array
 	sort.Ints(arr)
