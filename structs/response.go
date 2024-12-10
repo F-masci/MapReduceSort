@@ -4,3 +4,6 @@ package structs
 type SortMapResponse struct {
 	Response []int
 }
+
+// SortReduceResponse RPC Reduce response
+type SortReduceResponse struct{}
