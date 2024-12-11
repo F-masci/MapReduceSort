@@ -4,6 +4,7 @@ import (
 	"MapReduceSort/config"
 	"MapReduceSort/structs"
 	"MapReduceSort/utils"
+	"errors"
 	"flag"
 	"log"
 	"net"
@@ -14,72 +15,52 @@ import (
 	"time"
 )
 
-// WorkerHandler Handler per esporre il metodo RPC del worker
+// WorkerHandler Handler for exposing the worker's RPC methods
 type WorkerHandler struct {
-	ReduceQueue map[ReduceQueueKey][][]int
-	Mutex       sync.Mutex
+	mapService    bool                       // Indicates whether the map service is enabled
+	reduceService bool                       // Indicates whether the reduce service is enabled
+	reduceQueue   map[ReduceQueueKey][][]int // Queue for storing reduce requests
+	mutex         sync.Mutex                 // Mutex for synchronizing access to the reduce queue
 }
 
+// ReduceQueueKey Struct to uniquely identify reduce requests by client and timestamp
 type ReduceQueueKey struct {
-	Client    string
-	Timestamp time.Time
+	client    string
+	timestamp time.Time
 }
 
-func distributeNumbersByValue(input []int, maxValue, nodes int) [][]int {
-	// Calcola il range per ciascun nodo
-	rangeSize := (maxValue + 1) / nodes
-
-	// Inizializza il risultato
-	result := make([][]int, nodes)
-
-	// Distribuisci i numeri nei nodi
-	for _, num := range input {
-		if num > maxValue {
-			continue // Salta i numeri che superano il massimo valore
-		}
-		// Calcola il nodo a cui appartiene il numero
-		node := num / rangeSize
-		if node >= nodes {
-			node = nodes - 1 // Assicura che il valore massimo vada nell'ultimo nodo
-		}
-		result[node] = append(result[node], num)
-	}
-
-	return result
-}
-
-func mergeSortedArrays(input [][]int) []int {
-	var result []int
-	// Unisci tutti gli array
-	for _, array := range input {
-		result = append(result, array...)
-	}
-	// Ordina l'array risultante
-	sort.Ints(result)
-	return result
-}
-
+// Map Handles the map operation
 func (wh *WorkerHandler) Map(request structs.SortMapRequest, _ *structs.SortMapResponse) error {
 
+	// Ensure the map service is enabled
+	if !wh.mapService {
+		return errors.New("map service not enabled")
+	}
+
+	// Sort the input data
 	sort.Ints(request.Request)
 	log.Println("Mapped")
 
+	// Retrieve the addresses of reducers
 	_, _, reducerAddresses := config.ParseConfig()
 	nReducer := len(reducerAddresses)
-	distribution := distributeNumbersByValue(request.Request, config.CasualNumbersRange, nReducer)
+	distribution := utils.DistributeNumbersByValue(request.Request, nReducer)
 
-	// Ordina i chunk
+	// Send sorted chunks to reducers
 	for i := range nReducer {
 
 		chunk := distribution[i]
 		reducerConfig := reducerAddresses[i]
 
+		// Connect to the reducer
 		client, err := rpc.Dial(reducerConfig.Proto, reducerConfig.Address())
 		utils.CheckError(err)
 
+		// Prepare the request for the reducer
 		request := structs.SortReduceRequest{Client: request.Client, Timestamp: request.Timestamp, Request: chunk, ReducerIdx: i}
 		var reply structs.SortReduceResponse
 
+		// Call the reduce method on the worker
 		err = client.Call("WorkerHandler.Reduce", request, &reply)
 		utils.CheckError(err)
 
@@ -88,23 +69,38 @@ func (wh *WorkerHandler) Map(request structs.SortMapRequest, _ *structs.SortMapR
 	return nil
 }
 
+// Reduce Handles the reduce operation
 func (wh *WorkerHandler) Reduce(request structs.SortReduceRequest, _ *structs.SortMapResponse) error {
 
-	reduceQueueKey := ReduceQueueKey{Client: request.Client, Timestamp: request.Timestamp}
-	wh.Mutex.Lock()
-	wh.ReduceQueue[reduceQueueKey] = append(wh.ReduceQueue[reduceQueueKey], request.Request)
-	wh.Mutex.Unlock()
+	// Ensure the reduce service is enabled
+	if !wh.reduceService {
+		return errors.New("reduce service not enabled")
+	}
 
+	// Generate a unique key for the reduce queue
+	reduceQueueKey := ReduceQueueKey{client: request.Client, timestamp: request.Timestamp}
+	wh.mutex.Lock()
+	// Append the request to the reduce queue
+	wh.reduceQueue[reduceQueueKey] = append(wh.reduceQueue[reduceQueueKey], request.Request)
+	wh.mutex.Unlock()
+
+	// Retrieve the addresses of the mappers
 	_, mapperAddresses, _ := config.ParseConfig()
-	if len(wh.ReduceQueue[reduceQueueKey]) == len(mapperAddresses) {
+	// If all the mappers' requests have been received, start the reduce operation
+	if len(wh.reduceQueue[reduceQueueKey]) == len(mapperAddresses) {
+		// Create a filename for the result
 		filename := request.Client + "_" + request.Timestamp.Format("2006_01_02_15_04_05") + "__" + strconv.Itoa(request.ReducerIdx)
-		res := mergeSortedArrays(wh.ReduceQueue[reduceQueueKey])
+		// Merge and sort the arrays from the reduce queue
+		res := utils.MergeSortedArrays(wh.reduceQueue[reduceQueueKey])
+		// Write the result to a file
 		err := utils.WriteResultToFile(res, filename)
 		utils.CheckError(err)
 		log.Println(reduceQueueKey, "Reduced")
-		wh.Mutex.Lock()
-		delete(wh.ReduceQueue, reduceQueueKey)
-		wh.Mutex.Unlock()
+
+		// Clean up the reduce queue for the current key
+		wh.mutex.Lock()
+		delete(wh.reduceQueue, reduceQueueKey)
+		wh.mutex.Unlock()
 	}
 
 	return nil
@@ -112,36 +108,44 @@ func (wh *WorkerHandler) Reduce(request structs.SortReduceRequest, _ *structs.So
 
 func main() {
 
-	// Recuperare gli argomenti
-	address := flag.String("address", "localhost", "Specifica l'indirizzo su cui contattare il master")
-	port := flag.Int("port", 0, "Specifica la porta su cui contattare il master")
-	proto := flag.String("proto", "tcp", "Specifica il protocollo con cui contattare il master")
-	_ = flag.String("mode", "both", "Specifica se utilizzare il worker come mapper, reducer o entrambi")
+	/* --- ARGUMENTS --- */
+
+	// Specify the parameters to contact the worker
+	address := flag.String("address", "localhost", "Specifies the address to contact the worker")
+	port := flag.Int("port", 0, "Specifies the port to contact the worker")
+	proto := flag.String("proto", "tcp", "Specifies the protocol to contact the worker")
+	mapService := flag.Bool("map", false, "Specifies whether to enable the map service on the worker")
+	reduceService := flag.Bool("reduce", false, "Specifies whether to enable the reduce service on the worker")
 	flag.Parse()
 
 	if *port == 0 {
-		log.Fatal("Specificare il numero di porta")
+		log.Fatal("Please specify the port number")
 	}
 
+	// Allocate the worker address configuration
 	workerAddress := structs.WorkerAddress{
 		Host:  *address,
 		Port:  *port,
 		Proto: *proto,
 	}
 
-	// Alloco la funzione del worker e passo un puntatore
-	sortHandler := &WorkerHandler{ReduceQueue: make(map[ReduceQueueKey][][]int)}
+	// Allocate the worker handler and pass a pointer
+	workerHandler := &WorkerHandler{
+		mapService:    *mapService,
+		reduceService: *reduceService,
+		reduceQueue:   make(map[ReduceQueueKey][][]int),
+	}
 
+	// Create the RPC server
 	server := rpc.NewServer()
-	err := server.Register(sortHandler)
+	err := server.Register(workerHandler)
 	utils.CheckError(err)
 
-	// Faccio il bind con gli indirizzi specificati nelle config
+	// Bind the server to the specified address
 	lis, err := net.Listen(workerAddress.Proto, workerAddress.Address())
 	utils.CheckError(err)
 	log.Printf("RPC worker listens on port %d", workerAddress.Port)
 
-	// Metto il worker in ascolto
+	// Start the worker to listen for incoming connections
 	server.Accept(lis)
-
 }

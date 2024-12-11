@@ -1,10 +1,10 @@
 package structs
 
-// SortResponse RPC Master response
+// SortResponse Defines the RPC response from the Master
 type SortResponse struct{}
 
-// SortMapResponse RPC Map response
+// SortMapResponse Defines the RPC response from the Mapper
 type SortMapResponse struct{}
 
-// SortReduceResponse RPC Reduce response
+// SortReduceResponse Defines the RPC response from the Reducer
 type SortReduceResponse struct{}

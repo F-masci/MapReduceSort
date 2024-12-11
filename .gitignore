@@ -1,4 +1,4 @@
 **/.idea
-result/**
-debug/**
-docker/**
+.output/**
+**/.debug
+**/.docker

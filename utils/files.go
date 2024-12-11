@@ -3,44 +3,48 @@ package utils
 import (
 	"fmt"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 )
 
-// WriteResultToFile Scrive un array  su un file
+// WriteResultToFile Writes an array to a file
 func WriteResultToFile(arr []int, filename string) error {
-	// Ordina l'array
-	sort.Ints(arr)
 
-	// Controlla se la directory "result" esiste, altrimenti la crea
-	_, err := os.Stat("result")
+	const folder string = ".output/"
+
+	// Check if the "result" directory exists, otherwise create it
+	_, err := os.Stat(folder)
 	if os.IsNotExist(err) {
-		// Crea la directory se non esiste
-		err := os.Mkdir("result", 0755)
+		// Create the directory if it does not exist
+		err := os.Mkdir(folder, 0755)
 		if err != nil {
-			fmt.Println("Errore nella creazione della directory:", err)
+			fmt.Println("Error creating directory:", err)
 			return err
 		}
 	}
 
-	// Ora crea il file nella directory result
-	file, err := os.Create("result/" + filename)
+	// Now create the file in the directory
+	file, err := os.Create(folder + filename)
 	if err != nil {
-		fmt.Println("Errore nella creazione del file:", err)
-		return err
+		return fmt.Errorf("error creating the file: %v", err)
 	}
-	defer file.Close() // Assicurati di chiudere il file quando finito
+	defer func(file *os.File) {
+		err := file.Close()
+		if err != nil {
+			_ = fmt.Errorf("error closing the file: %v", err)
+		}
+	}(file)
 
-	// Converti ogni numero in stringa e scrivi sul file
+	// Convert each number to a string and write it to the file
 	var sb strings.Builder
 	for _, num := range arr {
 		sb.WriteString(strconv.Itoa(num) + "\n")
 	}
 
+	// Write the entire string to the file
 	_, err = file.WriteString(sb.String())
 	if err != nil {
-		return fmt.Errorf("errore durante la scrittura nel file: %v", err)
+		return fmt.Errorf("error writing to file: %v", err)
 	}
 
 	return nil
