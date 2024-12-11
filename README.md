@@ -5,7 +5,7 @@ Repository per lo sviluppo dell'esercizio di Sistemi Distribuiti e Cloud Computi
 ## Panoramica
 
 Questo progetto propone una soluzione di ordinamento scalabile per grandi dataset, adottando il paradigma MapReduce e implementando il sistema in Go.
-Il protocollo PRC è utilizzato per la comunicazione tra i nodi del cluster, garantendo un'efficiente elaborazione parallela dei dati.
+Il protocollo RPC è utilizzato per la comunicazione tra i nodi del cluster, garantendo un'efficiente elaborazione parallela dei dati.
 
 Il sistema adotta un'architettura master-worker in cui un nodo master coordina l'esecuzione delle operazioni di map.
 Al termine della fase di map, i dati intermedi vengono partizionati e successivamente inviati ai reducer per essere processati.
