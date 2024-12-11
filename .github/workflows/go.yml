@@ -1,0 +1,48 @@
+name: Go Build and Test Workflow
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build_and_test:
+    runs-on: ubuntu-latest
+
+    steps:
+    # Step 1: Checkout del codice
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    # Step 2: Imposta Go
+    - name: Set up Go
+      uses: actions/setup-go@v3
+      with:
+        go-version: '1.23.3'
+        
+    # Step 3: Cache delle dipendenze di Go
+    - name: Cache Go modules
+      uses: actions/cache@v2
+      with:
+        path: ~/.cache/go-build
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+
+    # Step 4: Installa le dipendenze di Go
+    - name: Install dependencies
+      run: go mod tidy
+
+    # Step 5: Build dei file Go
+    - name: Build Go files
+      run: |
+        go build -o client client.go
+        go build -o worker worker.go
+        go build -o master master.go
+
+    # Step 6: Esegui i test Go
+    - name: Run Go tests
+      run: go test ./...
