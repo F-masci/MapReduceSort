@@ -77,22 +77,29 @@ func main() {
 
 	/* --- SETUP --- */
 
-	// Specify the parameters to contact the master
+	// Select the config from the file
+	idx := flag.Int("idx", -1, "Specifies the index of the config to use from the file")
+	// Provide the configuration manually
 	address := flag.String("address", "localhost", "Specifies the address to contact the master")
 	port := flag.Int("port", 0, "Specifies the port to contact the master")
 	proto := flag.String("proto", "tcp", "Specifies the protocol to contact the master")
-
 	flag.Parse()
 
-	if *port == 0 {
-		log.Fatal("Please specify the port number")
-	}
+	// Retrieve master's addresses from the config file
+	masterAddresses, _, _ := config.ParseConfig()
 
-	// Allocate the master's configuration to bind to
-	masterAddress := structs.MasterAddress{
-		Host:  *address,
-		Port:  *port,
-		Proto: *proto,
+	// Load the master's configuration
+	var masterConfig = structs.MasterAddress{}
+	if *idx > -1 && *idx < len(masterAddresses) { // Select config from the file
+		masterConfig = masterAddresses[*idx]
+	} else if *address != "" && *port != 0 && *proto != "" {
+		masterConfig = structs.MasterAddress{ // Select manually provided config
+			Host:  *address,
+			Port:  *port,
+			Proto: *proto,
+		}
+	} else {
+		log.Fatalln("Please provide a config to use")
 	}
 
 	/* --- RPC --- */
@@ -106,9 +113,9 @@ func main() {
 	utils.CheckError(err)
 
 	// Bind to the specified address
-	lis, err := net.Listen(masterAddress.Proto, masterAddress.Address())
+	lis, err := net.Listen(masterConfig.Proto, masterConfig.Address())
 	utils.CheckError(err)
-	log.Printf("RPC master listens on port %d", masterAddress.Port)
+	log.Printf("RPC master listens on %s:%s:%d", masterConfig.Proto, masterConfig.Host, masterConfig.Port)
 
 	// Start the master listening for new connections
 	server.Accept(lis)

@@ -16,7 +16,7 @@ func main() {
 
 	// Specify the client identifier connecting to the master
 	client := flag.String("client", "guest", "Client identifier")
-	// Select the master's config index from the file
+	// Select the master's config from the file
 	masterIdx := flag.Int("master-idx", -1, "Specifies the index of the master to use from the config file")
 	// Provide the master's configuration manually
 	masterAddress := flag.String("master-address", "", "Specifies the master's address to use")
@@ -31,14 +31,14 @@ func main() {
 	var masterConfig = structs.MasterAddress{}
 	if *masterIdx > -1 && *masterIdx < len(masterAddresses) { // Select config from the file
 		masterConfig = masterAddresses[*masterIdx]
-	} else if *masterAddress != "" {
+	} else if *masterAddress != "" && *masterPort != 0 && *masterProto != "" {
 		masterConfig = structs.MasterAddress{ // Select manually provided config
 			Host:  *masterAddress,
 			Port:  *masterPort,
 			Proto: *masterProto,
 		}
 	} else {
-		log.Fatalln("Please select a master to use")
+		log.Fatalln("Please provide a master to use")
 	}
 
 	/* --- RANDOM GENERATION --- */

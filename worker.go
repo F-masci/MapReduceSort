@@ -144,7 +144,7 @@ func main() {
 	// Bind the server to the specified address
 	lis, err := net.Listen(workerAddress.Proto, workerAddress.Address())
 	utils.CheckError(err)
-	log.Printf("RPC worker listens on port %d", workerAddress.Port)
+	log.Printf("RPC worker listens on %s:%s:%d", workerAddress.Proto, workerAddress.Host, workerAddress.Port)
 
 	// Start the worker to listen for incoming connections
 	server.Accept(lis)
