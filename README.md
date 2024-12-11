@@ -70,7 +70,7 @@ Questo approccio distribuito permette di suddividere il carico di lavoro e di el
     ```
 
 - **structs/**: Contiene i file di definizione per le strutture utilizzate.
-    - `address.go`: Strutture per gli indirizzi dei noi.
+    - `address.go`: Strutture per gli indirizzi dei nodi.
     - `request.go`: Strutture per le richieste RPC.
     - `response.go`: Strutture per le risposte RPC.
 
